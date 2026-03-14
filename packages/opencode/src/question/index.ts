@@ -3,8 +3,12 @@ import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
-import { SessionID, MessageID } from "@/session/schema"
+import { SessionID, MessageID, PartID } from "@/session/schema"
+import { PartTable, SessionTable } from "@/session/session.sql"
+import type { MessageV2 } from "@/session/message-v2"
+import { Database, eq } from "@/storage/db"
 import { Log } from "@/util/log"
+import { Instance } from "@/project/instance"
 import z from "zod"
 import { QuestionID } from "./schema"
 
@@ -84,7 +88,8 @@ export namespace Question {
 
   interface PendingEntry {
     info: Request
-    deferred: Deferred.Deferred<Answer[], RejectedError>
+    deferred?: Deferred.Deferred<Answer[], RejectedError>
+    part?: PartID
   }
 
   interface State {
@@ -119,7 +124,7 @@ export namespace Question {
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {
               for (const item of state.pending.values()) {
-                yield* Deferred.fail(item.deferred, new RejectedError())
+                  if (item.deferred) yield* Deferred.fail(item.deferred, new RejectedError())
               }
               state.pending.clear()
             }),
@@ -128,6 +133,67 @@ export namespace Question {
           return state
         }),
       )
+
+      function running(part: MessageV2.Part): part is MessageV2.ToolPart & { state: MessageV2.ToolStateRunning } {
+        return part.type === "tool" && part.tool === "question" && part.state.status === "running"
+      }
+
+      function update(
+        id: PartID,
+        build: (part: MessageV2.ToolPart & { state: MessageV2.ToolStateRunning }) =>
+          | MessageV2.ToolStateCompleted
+          | MessageV2.ToolStateError,
+      ) {
+        const row = Database.use((db) => db.select().from(PartTable).where(eq(PartTable.id, id)).get())
+        if (!row || !running(row.data as MessageV2.Part)) return
+        const part = row.data as MessageV2.ToolPart & { state: MessageV2.ToolStateRunning }
+        Database.use((db) =>
+          db
+            .update(PartTable)
+            .set({ data: { ...part, state: build(part) } as typeof PartTable.$inferInsert.data, time_updated: Date.now() })
+            .where(eq(PartTable.id, id))
+            .run(),
+        )
+      }
+
+      const recover = Effect.fn("Question.recover")(function* () {
+        const pending = (yield* InstanceState.get(state)).pending
+        const rows = Database.use((db) =>
+          db
+            .select({ part: PartTable })
+            .from(PartTable)
+            .innerJoin(SessionTable, eq(PartTable.session_id, SessionTable.id))
+            .where(eq(SessionTable.directory, Instance.directory))
+            .orderBy(PartTable.id)
+            .all(),
+        )
+
+        const seen = new Set(
+          [...pending.values()]
+            .map((item) => item.info.tool)
+            .filter((tool): tool is NonNullable<Request["tool"]> => !!tool)
+            .map((tool) => `${tool.messageID}:${tool.callID}`),
+        )
+
+        for (const row of rows) {
+          const data = row.part.data as MessageV2.Part
+          if (!running(data)) continue
+          const key = `${row.part.message_id}:${data.callID}`
+          if (seen.has(key)) continue
+          seen.add(key)
+
+          const id = QuestionID.ascending()
+          pending.set(id, {
+            info: {
+              id,
+              sessionID: row.part.session_id,
+              questions: data.state.input.questions as Info[],
+              tool: { messageID: row.part.message_id, callID: data.callID },
+            },
+            part: row.part.id,
+          })
+        }
+      })
 
       const ask = Effect.fn("Question.ask")(function* (input: {
         sessionID: SessionID
@@ -170,7 +236,19 @@ export namespace Question {
           requestID: existing.info.id,
           answers: input.answers,
         })
-        yield* Deferred.succeed(existing.deferred, input.answers)
+
+        if (existing.part) {
+          update(existing.part, (part) => ({
+            status: "completed",
+            input: part.state.input,
+            output: `User answered: ${input.answers.map((x) => x.join(", ")).join(" | ")}`,
+            title: `Asked ${part.state.input.questions.length} question${part.state.input.questions.length === 1 ? "" : "s"}`,
+            metadata: { answers: input.answers },
+            time: { start: part.state.time.start, end: Date.now() },
+          }))
+        }
+
+        if (existing.deferred) yield* Deferred.succeed(existing.deferred, input.answers)
       })
 
       const reject = Effect.fn("Question.reject")(function* (requestID: QuestionID) {
@@ -186,10 +264,21 @@ export namespace Question {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
         })
-        yield* Deferred.fail(existing.deferred, new RejectedError())
+
+        if (existing.part) {
+          update(existing.part, (part) => ({
+            status: "error",
+            input: part.state.input,
+            error: "The user dismissed this question",
+            time: { start: part.state.time.start, end: Date.now() },
+          }))
+        }
+
+        if (existing.deferred) yield* Deferred.fail(existing.deferred, new RejectedError())
       })
 
       const list = Effect.fn("Question.list")(function* () {
+        yield* recover()
         const pending = (yield* InstanceState.get(state)).pending
         return Array.from(pending.values(), (x) => x.info)
       })
