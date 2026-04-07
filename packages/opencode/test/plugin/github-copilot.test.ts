@@ -50,8 +50,13 @@ async function plugin(input?: { message?: () => Promise<unknown>; session?: () =
 
 describe("plugin.github-copilot", () => {
   test("marks compaction agent requests as agent initiated", async () => {
-    const { hooks, client } = await plugin({
-      message: () => Promise.reject(new Error("should not fetch message")),
+    const { hooks } = await plugin({
+      message: () =>
+        Promise.resolve({
+          data: {
+            parts: [{ type: "compaction" }],
+          },
+        }),
     })
     const output: ChatOutput = { headers: {} }
 
@@ -63,8 +68,6 @@ describe("plugin.github-copilot", () => {
     )
 
     expect(output.headers["x-initiator"]).toBe("agent")
-    expect(client.session.message).not.toHaveBeenCalled()
-    expect(client.session.get).not.toHaveBeenCalled()
   })
 
   test("marks synthetic-only follow-up messages as agent initiated", async () => {

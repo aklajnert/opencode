@@ -316,12 +316,6 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
         output.headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
       }
 
-      const agentName = typeof incoming.agent === "string" ? incoming.agent : (incoming.agent as { name: string }).name
-      if (agentName === "compaction") {
-        output.headers["x-initiator"] = "agent"
-        return
-      }
-
       const msg = await sdk.session
         .message({
           path: {
@@ -331,6 +325,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
           query: {
             directory: input.directory,
           },
+          throwOnError: true,
         })
         .catch(() => undefined)
 
@@ -351,6 +346,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
           query: {
             directory: input.directory,
           },
+          throwOnError: true,
         })
         .catch(() => undefined)
       if (!session || !session.data?.parentID) return
