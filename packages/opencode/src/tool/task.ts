@@ -70,6 +70,15 @@ export const TaskTool = Tool.defineEffect(
             parentID: ctx.sessionID,
             title: params.description + ` (@${next.name} subagent)`,
             permission: [
+              ...(params.command
+                ? [
+                    {
+                      permission: "user_slash_command" as const,
+                      pattern: params.command,
+                      action: "allow" as const,
+                    },
+                  ]
+                : []),
               ...(canTodo
                 ? []
                 : [

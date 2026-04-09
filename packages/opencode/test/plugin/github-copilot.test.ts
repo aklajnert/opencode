@@ -28,10 +28,11 @@ function incoming(input?: Partial<ChatInput>): ChatInput {
   }
 }
 
-async function plugin(input?: { message?: () => Promise<unknown> }) {
+async function plugin(input?: { message?: () => Promise<unknown>; session?: () => Promise<unknown> }) {
   const client = {
     session: {
       message: mock(input?.message ?? (() => Promise.resolve({ data: { parts: [] } }))),
+      get: mock(input?.session ?? (() => Promise.resolve({ data: { id: "session" } }))),
     },
   }
 
@@ -141,12 +142,52 @@ describe("plugin.github-copilot", () => {
     expect(output.headers["x-initiator"]).toBe("agent")
   })
 
-  test("does not mark child session (subagent) as agent initiated", async () => {
+  test("marks AI-initiated child session (subagent) as agent initiated", async () => {
     const { hooks } = await plugin({
       message: () =>
         Promise.resolve({
           data: {
             parts: [{ type: "text", text: "Review the code changes" }],
+          },
+        }),
+      session: () =>
+        Promise.resolve({
+          data: {
+            id: "child-session",
+            parentID: "parent-session",
+            // no user_slash_command permission — this is an AI-invoked subagent
+            permission: [],
+          },
+        }),
+    })
+    const output: ChatOutput = { headers: {} }
+
+    await hooks["chat.headers"]?.(
+      incoming({
+        sessionID: "child-session",
+        message: { id: "message", sessionID: "child-session" } as ChatInput["message"],
+      }),
+      output,
+    )
+
+    expect(output.headers["x-initiator"]).toBe("agent")
+  })
+
+  test("does not mark user slash command child session as agent initiated", async () => {
+    const { hooks } = await plugin({
+      message: () =>
+        Promise.resolve({
+          data: {
+            parts: [{ type: "text", text: "Review the code changes" }],
+          },
+        }),
+      session: () =>
+        Promise.resolve({
+          data: {
+            id: "child-session",
+            parentID: "parent-session",
+            // user_slash_command marker — this was invoked by a user slash command
+            permission: [{ permission: "user_slash_command", pattern: "review", action: "allow" }],
           },
         }),
     })

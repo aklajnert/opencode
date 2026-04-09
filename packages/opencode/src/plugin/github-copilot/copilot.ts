@@ -137,7 +137,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
               "Openai-Intent": "conversation-edits",
             }
 
-            if (isVision && headers["x-initiator"] !== "agent") {
+            if (isVision) {
               headers["Copilot-Vision-Request"] = "true"
             }
 
@@ -346,6 +346,24 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
         output.headers["x-initiator"] = "agent"
         return
       }
+
+      const session = await sdk.session
+        .get({
+          path: {
+            id: incoming.message.sessionID,
+          },
+          query: {
+            directory: input.directory,
+          },
+        })
+        .catch(() => undefined)
+      if (!session?.data?.parentID) return
+      // user-invoked slash commands mark child sessions with "user_slash_command" permission — don't override those
+      const perms = (session.data as unknown as { permission?: Array<{ permission: string }> }).permission
+      const isUserCmd = perms?.some((r) => r.permission === "user_slash_command")
+      if (isUserCmd) return
+      // mark AI-initiated subagent sessions as agent-initiated
+      output.headers["x-initiator"] = "agent"
     },
   }
 }
