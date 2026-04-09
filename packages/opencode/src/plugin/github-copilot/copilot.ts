@@ -137,7 +137,7 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
               "Openai-Intent": "conversation-edits",
             }
 
-            if (isVision) {
+            if (isVision && headers["x-initiator"] !== "agent") {
               headers["Copilot-Vision-Request"] = "true"
             }
 
@@ -338,28 +338,14 @@ export async function CopilotAuthPlugin(input: PluginInput): Promise<Hooks> {
         .catch(() => undefined)
 
       const parts = msg?.data?.parts
-      const synthetic =
-        !!parts?.length && parts.every((p) => "synthetic" in p && (p as { synthetic?: boolean }).synthetic === true)
+      const isCompactionFollowup = !!parts?.some(
+        (p) => "text" in p && (p as { text?: string }).text === "[auto-compaction-followup]",
+      )
 
-      if (parts?.some((part) => part.type === "compaction") || synthetic) {
+      if (parts?.some((part) => part.type === "compaction") || isCompactionFollowup) {
         output.headers["x-initiator"] = "agent"
         return
       }
-
-      const session = await sdk.session
-        .get({
-          path: {
-            id: incoming.sessionID,
-          },
-          query: {
-            directory: input.directory,
-          },
-          throwOnError: true,
-        })
-        .catch(() => undefined)
-      if (!session || !session.data?.parentID) return
-      // mark subagent sessions as agent initiated matching standard that other copilot tools have
-      output.headers["x-initiator"] = "agent"
     },
   }
 }

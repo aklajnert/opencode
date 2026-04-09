@@ -28,11 +28,10 @@ function incoming(input?: Partial<ChatInput>): ChatInput {
   }
 }
 
-async function plugin(input?: { message?: () => Promise<unknown>; session?: () => Promise<unknown> }) {
+async function plugin(input?: { message?: () => Promise<unknown> }) {
   const client = {
     session: {
       message: mock(input?.message ?? (() => Promise.resolve({ data: { parts: [] } }))),
-      get: mock(input?.session ?? (() => Promise.resolve({ data: {} }))),
     },
   }
 
@@ -70,12 +69,18 @@ describe("plugin.github-copilot", () => {
     expect(output.headers["x-initiator"]).toBe("agent")
   })
 
-  test("marks synthetic-only follow-up messages as agent initiated", async () => {
+  test("does not mark synthetic-only messages without compaction marker as agent initiated", async () => {
     const { hooks } = await plugin({
       message: () =>
         Promise.resolve({
           data: {
-            parts: [{ type: "text", synthetic: true }],
+            parts: [
+              {
+                type: "text",
+                synthetic: true,
+                text: "Summarize the task tool output above and continue with your task.",
+              },
+            ],
           },
         }),
     })
@@ -83,7 +88,7 @@ describe("plugin.github-copilot", () => {
 
     await hooks["chat.headers"]?.(incoming(), output)
 
-    expect(output.headers["x-initiator"]).toBe("agent")
+    expect(output.headers["x-initiator"]).toBeUndefined()
   })
 
   test("marks auto-compaction marker messages as agent initiated", async () => {
@@ -96,10 +101,11 @@ describe("plugin.github-copilot", () => {
                 type: "text",
                 text: "[auto-compaction-followup]",
                 synthetic: true,
+                ignored: true,
               },
               {
                 type: "text",
-                text: "Continue if you have next steps",
+                text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
                 synthetic: true,
               },
             ],
@@ -113,6 +119,50 @@ describe("plugin.github-copilot", () => {
     expect(output.headers["x-initiator"]).toBe("agent")
   })
 
+  test("marks compaction trigger messages as agent initiated", async () => {
+    const { hooks } = await plugin({
+      message: () =>
+        Promise.resolve({
+          data: {
+            parts: [
+              {
+                type: "compaction",
+                summary: "The conversation was compacted.",
+                auto: true,
+              },
+            ],
+          },
+        }),
+    })
+    const output: ChatOutput = { headers: {} }
+
+    await hooks["chat.headers"]?.(incoming(), output)
+
+    expect(output.headers["x-initiator"]).toBe("agent")
+  })
+
+  test("does not mark child session (subagent) as agent initiated", async () => {
+    const { hooks } = await plugin({
+      message: () =>
+        Promise.resolve({
+          data: {
+            parts: [{ type: "text", text: "Review the code changes" }],
+          },
+        }),
+    })
+    const output: ChatOutput = { headers: {} }
+
+    await hooks["chat.headers"]?.(
+      incoming({
+        sessionID: "child-session",
+        message: { id: "message", sessionID: "child-session" } as ChatInput["message"],
+      }),
+      output,
+    )
+
+    expect(output.headers["x-initiator"]).toBeUndefined()
+  })
+
   test("does not override normal top-level user messages", async () => {
     const { hooks } = await plugin({
       message: () =>
@@ -121,7 +171,6 @@ describe("plugin.github-copilot", () => {
             parts: [{ type: "text", text: "hello" }],
           },
         }),
-      session: () => Promise.resolve({ data: {} }),
     })
     const output: ChatOutput = { headers: {} }
 
