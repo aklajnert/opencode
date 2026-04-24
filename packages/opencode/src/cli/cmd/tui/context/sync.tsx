@@ -435,9 +435,21 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.session.status({ workspace }).then((x) => {
               setStore("session_status", reconcile(x.data ?? {}))
             }),
-            sdk.client.provider.auth({ workspace }).then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
-            sdk.client.vcs.get({ workspace }).then((x) => setStore("vcs", reconcile(x.data))),
-            project.workspace.sync(),
+             sdk.client.provider.auth({ workspace }).then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
+             sdk.client.vcs.get({ workspace }).then((x) => setStore("vcs", reconcile(x.data))),
+             sdk.client.question.list({ workspace }).then((x) => {
+               if (x.data) {
+                 const grouped: Record<string, QuestionRequest[]> = {}
+                 for (const q of x.data) {
+                   if (!grouped[q.sessionID]) grouped[q.sessionID] = []
+                   grouped[q.sessionID].push(q)
+                 }
+                 for (const [id, qs] of Object.entries(grouped)) {
+                   setStore("question", id, reconcile(qs.sort((a, b) => a.id.localeCompare(b.id))))
+                 }
+               }
+             }),
+             project.workspace.sync(),
           ]).then(() => {
             setStore("status", "complete")
           })
