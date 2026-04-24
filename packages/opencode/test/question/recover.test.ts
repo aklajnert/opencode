@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { Question } from "../../src/question"
 import { Instance } from "../../src/project/instance"
-import { Database, eq } from "../../src/storage/db"
+import { Database, eq } from "../../src/storage"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { tmpdir } from "../fixture/fixture"
 import { resetDatabase } from "../fixture/db"

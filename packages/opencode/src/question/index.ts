@@ -1,12 +1,12 @@
 import { Deferred, Effect, Layer, Schema, Context } from "effect"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
-import { InstanceState } from "@/effect/instance-state"
+import { InstanceState } from "@/effect"
 import { makeRuntime } from "@/effect/run-service"
 import { SessionID, MessageID, PartID } from "@/session/schema"
 import { PartTable, SessionTable } from "@/session/session.sql"
 import type { MessageV2 } from "@/session/message-v2"
-import { Database, eq } from "@/storage/db"
+import { Database, eq } from "@/storage"
 import { zod } from "@/util/effect-zod"
 import { Log } from "@/util"
 import { withStatics } from "@/util/schema"
@@ -89,7 +89,7 @@ export class Reply extends Schema.Class<Reply>("QuestionReply")({
 
 interface PendingEntry {
   info: Request
-  deferred?: Deferred.Deferred<Answer[], RejectedError>
+  deferred?: Deferred.Deferred<ReadonlyArray<Answer>, RejectedError>
   part?: PartID
 }
 
@@ -322,11 +322,11 @@ export async function ask(input: {
   sessionID: SessionID
   questions: Info[]
   tool?: { messageID: MessageID; callID: string }
-}): Promise<Answer[]> {
+}): Promise<ReadonlyArray<Answer>> {
   return runPromise((s) => s.ask(input))
 }
 
-export async function reply(input: { requestID: QuestionID; answers: Answer[] }) {
+export async function reply(input: { requestID: QuestionID; answers: ReadonlyArray<Answer> }) {
   return runPromise((s) => s.reply(input))
 }
 
